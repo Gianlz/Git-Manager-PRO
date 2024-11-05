@@ -695,13 +695,20 @@ class GitManager:
             messagebox.showerror("Erro", str(e))
 
     def clone_repository(self):
-        clone_window = ctk.CTkToplevel(self.window)
+        # Create the clone window
+        clone_window = ctk.CTkToplevel()
         clone_window.title("Clonar Repositório")
         clone_window.geometry("400x200")
+        
+        # Ensure window is created before continuing
+        clone_window.wait_visibility()
+        
+        # Make window modal and grab focus
         clone_window.transient(self.window)
         clone_window.grab_set()
+        clone_window.focus_set()
         
-        # Centralizar a janela
+        # Center window
         x = self.window.winfo_x() + (self.window.winfo_width() - 400) // 2
         y = self.window.winfo_y() + (self.window.winfo_height() - 200) // 2
         clone_window.geometry(f"+{x}+{y}")
@@ -780,13 +787,20 @@ class GitManager:
             messagebox.showerror("Erro", "Nenhum repositório aberto!")
             return
             
-        commit_window = ctk.CTkToplevel(self.window)
+        # Create commit window    
+        commit_window = ctk.CTkToplevel()
         commit_window.title("Fazer Commit")
         commit_window.geometry("500x300")
+        
+        # Ensure window is created
+        commit_window.wait_visibility()
+        
+        # Make window modal and grab focus
         commit_window.transient(self.window)
         commit_window.grab_set()
+        commit_window.focus_set()
         
-        # Centralizar a janela
+        # Center window
         x = self.window.winfo_x() + (self.window.winfo_width() - 500) // 2
         y = self.window.winfo_y() + (self.window.winfo_height() - 300) // 2
         commit_window.geometry(f"+{x}+{y}")
@@ -820,14 +834,20 @@ class GitManager:
             messagebox.showerror("Erro", "Nenhum repositório aberto!")
             return
             
-        # Criar janela de branches
-        branch_window = ctk.CTkToplevel(self.window)
+        # Create branches window
+        branch_window = ctk.CTkToplevel()
         branch_window.title("Gerenciar Branches")
         branch_window.geometry("500x600")
-        branch_window.transient(self.window)  # Faz a janela ser modal
-        branch_window.grab_set()  # Força foco na janela
         
-        # Centralizar a janela
+        # Ensure window is created
+        branch_window.wait_visibility()
+        
+        # Make window modal and grab focus
+        branch_window.transient(self.window)
+        branch_window.grab_set()
+        branch_window.focus_set()
+        
+        # Center window
         x = self.window.winfo_x() + (self.window.winfo_width() - 500) // 2
         y = self.window.winfo_y() + (self.window.winfo_height() - 600) // 2
         branch_window.geometry(f"+{x}+{y}")
