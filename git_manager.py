@@ -2,16 +2,32 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import git
 import os
+import json
 
 class GitManager:
     def __init__(self):
+        self.config_file = os.path.join(os.path.dirname(__file__), "config.json")
+        self.load_config()
+        
         self.window = ctk.CTk()
         self.window.title("Git Manager Pro")
         self.window.geometry("1200x900")
+        ctk.set_appearance_mode("system")
+        # Apply saved theme if exists
+        if hasattr(self, 'current_theme'):
+            theme_path = os.path.join(os.path.dirname(__file__), "themes", f"{self.current_theme}.json")
+            if os.path.exists(theme_path):
+                ctk.set_default_color_theme(theme_path)
         
-        # Configurar tema escuro
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
+        # Center window on screen
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        x = (screen_width - 1200) // 2
+        y = (screen_height - 900) // 2
+        self.window.geometry(f"+{x}+{y}")
+        
+    
+   
         
         # Repositório atual
         self.current_repo = None
@@ -33,6 +49,12 @@ class GitManager:
         
         self.create_left_panel()
         self.create_main_area()
+        
+        # Add config tab to your tabview creation
+        self.tab_config = self.tabview.add("Config")
+        
+        # Call the setup method
+        self.setup_config_tab()
         
     def create_left_panel(self):
         # Título REPOSITÓRIO
@@ -1064,6 +1086,123 @@ class GitManager:
             
         except Exception as e:
             messagebox.showerror("Erro", f"Erro ao sincronizar: {str(e)}")
+
+    def setup_config_tab(self):
+        # Frame for theme selection
+        theme_frame = ctk.CTkFrame(self.tab_config)
+        theme_frame.pack(fill="x", pady=10, padx=10)
+        
+        theme_label = ctk.CTkLabel(
+            theme_frame,
+            text="Theme:",
+            font=("Arial", 12, "bold")
+        )
+        theme_label.pack(side="left", padx=5)
+        
+        # Get available themes
+        themes_dir = os.path.join(os.path.dirname(__file__), "themes")
+        if not os.path.exists(themes_dir):
+            os.makedirs(themes_dir)
+        
+        theme_files = [f[:-5] for f in os.listdir(themes_dir) if f.endswith('.json')]
+        if not theme_files:
+            # Create default theme if no themes exist
+            default_theme = {
+                "CTk": {
+                    "fg_color": ["gray92", "gray14"]
+                },
+                "CTkFrame": {
+                    "corner_radius": 6,
+                    "border_width": 0,
+                    "fg_color": ["gray86", "gray17"],
+                    "top_fg_color": ["gray81", "gray20"],
+                    "border_color": ["gray65", "gray28"]
+                }
+            }
+            
+            with open(os.path.join(themes_dir, "default.json"), "w") as f:
+                json.dump(default_theme, f, indent=4)
+            theme_files = ["default"]
+        
+        def load_theme(theme_name):
+            try:
+                theme_path = os.path.join(themes_dir, f"{theme_name}.json")
+                with open(theme_path, "r") as f:
+                    theme_data = json.load(f)
+                
+                # Save theme selection to config
+                self.current_theme = theme_name
+                self.save_config()
+                
+                # Apply theme
+                ctk.set_default_color_theme(theme_path)
+                messagebox.showinfo("Success", f"Theme '{theme_name}' loaded!")
+                
+                # Restart application to apply theme
+                if messagebox.askyesno("Restart Required", 
+                    "The application needs to restart to apply the theme. Restart now?"):
+                    self.window.destroy()
+                    app = GitManager()
+                    app.run()
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load theme: {str(e)}")
+        
+        # Theme selector
+        self.theme_option = ctk.CTkOptionMenu(
+            theme_frame,
+            values=theme_files,
+            command=load_theme,
+            width=200
+        )
+        self.theme_option.pack(side="left", padx=10)
+        
+        # Set initial theme selection to match current theme
+        if hasattr(self, 'current_theme') and self.current_theme in theme_files:
+            self.theme_option.set(self.current_theme)
+        elif theme_files:
+            self.theme_option.set(theme_files[0])
+        
+        # Button to refresh theme list
+        refresh_btn = ctk.CTkButton(
+            theme_frame,
+            text="🔄",
+            width=32,
+            height=32,
+            command=lambda: self.refresh_theme_list()
+        )
+        refresh_btn.pack(side="left", padx=5)
+
+    def refresh_theme_list(self):
+        themes_dir = os.path.join(os.path.dirname(__file__), "themes")
+        theme_files = [f[:-5] for f in os.listdir(themes_dir) if f.endswith('.json')]
+        
+        self.theme_option.configure(values=theme_files)
+        if theme_files:
+            self.theme_option.set(theme_files[0])
+
+    def load_config(self):
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                    self.current_theme = config.get('theme', 'default')
+            else:
+                self.current_theme = 'default'
+                self.save_config()
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            self.current_theme = 'default'
+
+    def save_config(self):
+        try:
+            config = {
+                'theme': self.current_theme
+            }
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=4)
+        except Exception as e:
+            print(f"Error saving config: {e}")
 
     def run(self):
         self.window.mainloop()
