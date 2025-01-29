@@ -1,8 +1,15 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-import git
 import os
 import json
+
+# First try to import git with error handling
+try:
+    import git
+except ImportError as e:
+    # Store the original error message
+    GIT_IMPORT_ERROR = str(e)
+    git = None
 
 class GitManager:
     def __init__(self):
@@ -50,11 +57,13 @@ class GitManager:
         self.create_left_panel()
         self.create_main_area()
         
-        # Add config tab to your tabview creation
+        # Add new tabs to your tabview creation
         self.tab_config = self.tabview.add("Config")
+        self.tab_branches = self.tabview.add("Branches")
         
-        # Call the setup method
+        # Call the setup methods
         self.setup_config_tab()
+        self.setup_branches_tab()
         
     def create_left_panel(self):
         # Título REPOSITÓRIO
@@ -264,25 +273,344 @@ class GitManager:
         self.setup_branch_sync_frame()
         
     def setup_historico_tab(self):
-        # Frame para filtros
-        filters_frame = ctk.CTkFrame(self.tab_historico)
+        # Main container
+        main_frame = ctk.CTkFrame(self.tab_historico)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Title
+        title_label = ctk.CTkLabel(
+            main_frame,
+            text="HISTÓRICO DE COMMITS",
+            font=("Arial", 14, "bold")
+        )
+        title_label.pack(pady=(5,10), anchor="w")
+        
+        # Filters frame
+        filters_frame = ctk.CTkFrame(main_frame)
         filters_frame.pack(fill="x", pady=5)
         
-        # Dropdown para branch
-        branch_label = ctk.CTkLabel(filters_frame, text="Branch:")
+        # Branch filter
+        branch_frame = ctk.CTkFrame(filters_frame)
+        branch_frame.pack(side="left", padx=5)
+        
+        branch_label = ctk.CTkLabel(branch_frame, text="Branch:", font=("Arial", 12))
         branch_label.pack(side="left", padx=5)
         
+        self.history_branch_var = ctk.StringVar(value="all")
         self.branch_combobox = ctk.CTkComboBox(
-            filters_frame,
-            values=["main"],
-            width=150
+            branch_frame,
+            values=["all"],
+            variable=self.history_branch_var,
+            width=150,
+            command=self.update_historico
         )
         self.branch_combobox.pack(side="left", padx=5)
         
-        # Frame para lista de commits
-        self.commits_frame = ctk.CTkScrollableFrame(self.tab_historico)
-        self.commits_frame.pack(fill="both", expand=True, pady=5)
+        # Date filter
+        date_frame = ctk.CTkFrame(filters_frame)
+        date_frame.pack(side="left", padx=20)
         
+        date_label = ctk.CTkLabel(date_frame, text="Period:", font=("Arial", 12))
+        date_label.pack(side="left", padx=5)
+        
+        self.date_filter_var = ctk.StringVar(value="All time")
+        date_combobox = ctk.CTkComboBox(
+            date_frame,
+            values=["All time", "Today", "Last 7 days", "Last 30 days", "Last 90 days"],
+            variable=self.date_filter_var,
+            width=150,
+            command=self.update_historico
+        )
+        date_combobox.pack(side="left", padx=5)
+        
+        # Search frame
+        search_frame = ctk.CTkFrame(main_frame)
+        search_frame.pack(fill="x", pady=10)
+        
+        search_label = ctk.CTkLabel(search_frame, text="🔍", font=("Arial", 14))
+        search_label.pack(side="left", padx=5)
+        
+        self.search_entry = ctk.CTkEntry(
+            search_frame,
+            placeholder_text="Search commits...",
+            width=300
+        )
+        self.search_entry.pack(side="left", padx=5)
+        self.search_entry.bind('<Return>', lambda e: self.update_historico())
+        
+        search_button = ctk.CTkButton(
+            search_frame,
+            text="Search",
+            width=100,
+            command=self.update_historico
+        )
+        search_button.pack(side="left", padx=5)
+        
+        # Commits list
+        self.commits_frame = ctk.CTkScrollableFrame(main_frame)
+        self.commits_frame.pack(fill="both", expand=True, pady=10)
+        
+        # Initial update
+        self.update_historico()
+
+    def update_historico(self, *args):
+        if not self.current_repo:
+            return
+        
+        # Clear previous commits
+        for widget in self.commits_frame.winfo_children():
+            widget.destroy()
+        
+        try:
+            # Update branch list
+            branches = ["all"] + [b.name for b in self.current_repo.heads]
+            self.branch_combobox.configure(values=branches)
+            
+            # Get commits based on filters
+            commits = self.get_filtered_commits()
+            
+            if not commits:
+                no_commits_label = ctk.CTkLabel(
+                    self.commits_frame,
+                    text="No commits found",
+                    font=("Arial", 12),
+                    text_color="gray"
+                )
+                no_commits_label.pack(pady=20)
+                return
+            
+            # Display commits
+            for commit in commits:
+                commit_frame = self.create_commit_widget(commit)
+                commit_frame.pack(fill="x", pady=2, padx=5)
+                
+        except git.GitCommandError as e:
+            error_label = ctk.CTkLabel(
+                self.commits_frame,
+                text=f"Error: {str(e)}",
+                text_color="red"
+            )
+            error_label.pack(pady=10)
+
+    def get_filtered_commits(self):
+        # Build git log command based on filters
+        log_args = ['--pretty=format:%H']  # Get full hashes
+        
+        # Branch filter
+        if self.history_branch_var.get() != "all":
+            log_args.append(self.history_branch_var.get())
+        
+        # Date filter
+        date_filter = self.date_filter_var.get()
+        if date_filter != "All time":
+            if date_filter == "Today":
+                log_args.append('--since=midnight')
+            elif date_filter == "Last 7 days":
+                log_args.append('--since=7.days.ago')
+            elif date_filter == "Last 30 days":
+                log_args.append('--since=30.days.ago')
+            elif date_filter == "Last 90 days":
+                log_args.append('--since=90.days.ago')
+        
+        # Search filter
+        search_text = self.search_entry.get().strip()
+        if search_text:
+            log_args.append(f'--grep={search_text}')
+            log_args.append('--regexp-ignore-case')
+        
+        # Get commit hashes
+        commit_hashes = self.current_repo.git.log(*log_args).split('\n')
+        
+        # Convert hashes to commit objects
+        return [self.current_repo.commit(hash) for hash in commit_hashes if hash]
+
+    def create_commit_widget(self, commit):
+        frame = ctk.CTkFrame(self.commits_frame)
+        
+        # Header frame
+        header_frame = ctk.CTkFrame(frame)
+        header_frame.pack(fill="x", padx=5, pady=2)
+        
+        # Commit hash
+        hash_label = ctk.CTkLabel(
+            header_frame,
+            text=commit.hexsha[:8],
+            font=("Consolas", 12),
+            text_color="#ffaa00"
+        )
+        hash_label.pack(side="left", padx=5)
+        
+        # Author
+        author_label = ctk.CTkLabel(
+            header_frame,
+            text=f"by {commit.author.name}",
+            font=("Arial", 11)
+        )
+        author_label.pack(side="left", padx=5)
+        
+        # Date
+        date = commit.committed_datetime.strftime("%Y-%m-%d %H:%M")
+        date_label = ctk.CTkLabel(
+            header_frame,
+            text=date,
+            font=("Arial", 11),
+            text_color="gray"
+        )
+        date_label.pack(side="right", padx=5)
+        
+        # Commit message
+        msg_frame = ctk.CTkFrame(frame)
+        msg_frame.pack(fill="x", padx=5, pady=2)
+        
+        msg_label = ctk.CTkLabel(
+            msg_frame,
+            text=commit.message.strip(),
+            font=("Arial", 12),
+            justify="left",
+            anchor="w"
+        )
+        msg_label.pack(side="left", padx=5, fill="x", expand=True)
+        
+        # Actions frame
+        actions_frame = ctk.CTkFrame(frame)
+        actions_frame.pack(fill="x", padx=5, pady=2)
+        
+        # Show changes button
+        def show_commit_changes():
+            self.show_commit_details(commit)
+        
+        changes_btn = ctk.CTkButton(
+            actions_frame,
+            text="Show Changes",
+            command=show_commit_changes,
+            width=100,
+            height=24
+        )
+        changes_btn.pack(side="left", padx=5)
+        
+        # Checkout button
+        def checkout_commit():
+            try:
+                self.current_repo.git.checkout(commit.hexsha)
+                messagebox.showinfo("Success", f"Checked out commit {commit.hexsha[:8]}")
+                self.refresh()
+            except git.GitCommandError as e:
+                messagebox.showerror("Error", str(e))
+        
+        checkout_btn = ctk.CTkButton(
+            actions_frame,
+            text="Checkout",
+            command=checkout_commit,
+            width=100,
+            height=24
+        )
+        checkout_btn.pack(side="left", padx=5)
+        
+        return frame
+
+    def show_commit_details(self, commit):
+        # Create details window
+        details_window = ctk.CTkToplevel(self.window)
+        details_window.title(f"Commit Details - {commit.hexsha[:8]}")
+        details_window.geometry("800x600")
+        details_window.transient(self.window)
+        details_window.grab_set()
+        
+        # Center window
+        x = self.window.winfo_x() + (self.window.winfo_width() - 800) // 2
+        y = self.window.winfo_y() + (self.window.winfo_height() - 600) // 2
+        details_window.geometry(f"+{x}+{y}")
+        
+        # Commit info frame
+        info_frame = ctk.CTkFrame(details_window)
+        info_frame.pack(fill="x", padx=10, pady=5)
+        
+        # Basic info
+        ctk.CTkLabel(
+            info_frame,
+            text=f"Commit: {commit.hexsha}",
+            font=("Consolas", 12)
+        ).pack(anchor="w", padx=5)
+        
+        ctk.CTkLabel(
+            info_frame,
+            text=f"Author: {commit.author.name} <{commit.author.email}>",
+            font=("Arial", 12)
+        ).pack(anchor="w", padx=5)
+        
+        ctk.CTkLabel(
+            info_frame,
+            text=f"Date: {commit.committed_datetime.strftime('%Y-%m-%d %H:%M:%S')}",
+            font=("Arial", 12)
+        ).pack(anchor="w", padx=5)
+        
+        # Commit message
+        msg_frame = ctk.CTkFrame(details_window)
+        msg_frame.pack(fill="x", padx=10, pady=5)
+        
+        ctk.CTkLabel(
+            msg_frame,
+            text="Message:",
+            font=("Arial", 12, "bold")
+        ).pack(anchor="w", padx=5)
+        
+        msg_text = ctk.CTkTextbox(msg_frame, height=60)
+        msg_text.pack(fill="x", padx=5, pady=5)
+        msg_text.insert("1.0", commit.message)
+        msg_text.configure(state="disabled")
+        
+        # Changes
+        changes_frame = ctk.CTkFrame(details_window)
+        changes_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        ctk.CTkLabel(
+            changes_frame,
+            text="Changes:",
+            font=("Arial", 12, "bold")
+        ).pack(anchor="w", padx=5)
+        
+        # Show diff in a textbox
+        diff_text = ctk.CTkTextbox(changes_frame, font=("Consolas", 12))
+        diff_text.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        try:
+            # Get the diff
+            diff = self.current_repo.git.show(
+                commit.hexsha,
+                '--color=never',
+                '--patch'
+            )
+            
+            # Insert diff with syntax highlighting
+            diff_text.insert("1.0", diff)
+            
+            # Apply basic syntax highlighting
+            for pattern, color in [
+                (r'diff --git.*\n', '#00ff00'),  # File headers in green
+                (r'\+.*\n', '#00ff00'),          # Additions in green
+                (r'-.*\n', '#ff0000'),           # Deletions in red
+                (r'@@ .*\n', '#00ffff')          # Chunk headers in cyan
+            ]:
+                start = "1.0"
+                while True:
+                    start = diff_text.search(pattern, start, "end", regexp=True)
+                    if not start:
+                        break
+                    line_end = diff_text.search('\n', start)
+                    if not line_end:
+                        line_end = "end"
+                    else:
+                        line_end = f"{line_end}+1c"
+                    diff_text.tag_add(f"color_{color}", start, line_end)
+                    diff_text.tag_config(f"color_{color}", foreground=color)
+                    start = line_end
+            
+            diff_text.configure(state="disabled")
+            
+        except git.GitCommandError as e:
+            diff_text.insert("1.0", f"Error getting diff: {str(e)}")
+            diff_text.configure(state="disabled")
+
     def setup_estatisticas_tab(self):
         # Frame para período
         period_frame = ctk.CTkFrame(self.tab_estatisticas)
@@ -325,75 +653,6 @@ class GitManager:
             )
             value_label.grid(row=i, column=1, padx=10, pady=5, sticky="w")
             
-    def update_historico(self):
-        if not self.current_repo:
-            return
-            
-        # Limpar commits anteriores
-        for widget in self.commits_frame.winfo_children():
-            widget.destroy()
-            
-        try:
-            for commit in self.current_repo.iter_commits():
-                commit_frame = ctk.CTkFrame(self.commits_frame)
-                commit_frame.pack(fill="x", pady=2, padx=5)
-                
-                # Data do commit
-                date = commit.committed_datetime.strftime("%d/%m/%Y %H:%M")
-                date_label = ctk.CTkLabel(
-                    commit_frame,
-                    text=date,
-                    font=("Arial", 10)
-                )
-                date_label.pack(side="left", padx=5)
-                
-                # Hash do commit
-                hash_label = ctk.CTkLabel(
-                    commit_frame,
-                    text=commit.hexsha[:7],
-                    font=("Arial", 10)
-                )
-                hash_label.pack(side="left", padx=5)
-                
-                # Mensagem do commit
-                msg_label = ctk.CTkLabel(
-                    commit_frame,
-                    text=commit.message.split('\n')[0],
-                    font=("Arial", 10)
-                )
-                msg_label.pack(side="left", padx=5)
-        except Exception as e:
-            messagebox.showerror("Erro", str(e))
-            
-    def update_estatisticas(self):
-        if not self.current_repo:
-            return
-            
-        try:
-            # Total de commits
-            total_commits = len(list(self.current_repo.iter_commits()))
-            
-            # Total de contribuidores
-            authors = set()
-            for commit in self.current_repo.iter_commits():
-                authors.add(commit.author.name)
-            
-            # Atualizar labels com as estatísticas
-            # (Você precisará criar referências para estes labels primeiro)
-            # self.total_commits_label.configure(text=str(total_commits))
-            # self.total_authors_label.configure(text=str(len(authors)))
-            
-        except git.GitCommandError as e:
-            messagebox.showerror("Erro", str(e))
-            
-    def refresh(self):
-        self.update_status()
-        self.update_historico()
-        self.update_estatisticas()
-        self.update_mini_console()
-        self.update_file_list()
-        self.update_branch_status()
-
     def update_mini_console(self):
         if not self.current_repo:
             for label in self.info_labels.values():
@@ -542,12 +801,18 @@ class GitManager:
             self.open_repository(path)
             
     def open_repository(self, path):
+        if git is None:
+            messagebox.showerror("Error", "Git is not properly configured. Please install Git and restart the application.")
+            return
+            
         try:
             self.current_repo = git.Repo(path)
             self.update_status()
             self.update_mini_console()
         except git.InvalidGitRepositoryError:
-            messagebox.showerror("Erro", "Diretório selecionado não é um repositório Git válido!")
+            messagebox.showerror("Error", "Selected directory is not a valid Git repository!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open repository: {str(e)}")
             
     def update_status(self):
         if not self.current_repo:
@@ -695,6 +960,10 @@ class GitManager:
             messagebox.showerror("Erro", str(e))
 
     def clone_repository(self):
+        if git is None:
+            messagebox.showerror("Error", "Git is not properly configured. Please install Git and restart the application.")
+            return
+            
         clone_window = ctk.CTkToplevel(self.window)
         clone_window.title("Clonar Repositório")
         clone_window.geometry("400x200")
@@ -752,6 +1021,10 @@ class GitManager:
         clone_button.pack(pady=20)
 
     def pull_changes(self):
+        if git is None:
+            messagebox.showerror("Error", "Git is not properly configured. Please install Git and restart the application.")
+            return
+            
         if not self.current_repo:
             messagebox.showerror("Erro", "Nenhum repositório aberto!")
             return
@@ -764,6 +1037,10 @@ class GitManager:
             messagebox.showerror("Erro", str(e))
 
     def push_changes(self):
+        if git is None:
+            messagebox.showerror("Error", "Git is not properly configured. Please install Git and restart the application.")
+            return
+            
         if not self.current_repo:
             messagebox.showerror("Erro", "Nenhum repositório aberto!")
             return
@@ -994,27 +1271,25 @@ class GitManager:
 
     def check_branch_status(self):
         try:
-            current = self.current_repo.active_branch.name
-            # Verifica se existe upstream configurado
-            try:
-                upstream = self.current_repo.active_branch.tracking_branch()
-                if not upstream:
-                    return False, "Branch não tem upstream configurado"
-                
-                # Fetch para atualizar referências remotas
-                self.current_repo.remotes.origin.fetch()
-                
-                # Verifica commits ahead/behind
-                commits_behind = len(list(self.current_repo.iter_commits(f'{current}..{upstream.name}')))
-                commits_ahead = len(list(self.current_repo.iter_commits(f'{upstream.name}..{current}')))
-                
-                if commits_behind > 0 or commits_ahead > 0:
-                    return False, f"Branch desatualizada (ahead: {commits_ahead}, behind: {commits_behind})"
-                return True, "Branch sincronizada"
-                
-            except git.GitCommandError:
-                return False, "Erro ao verificar status da branch"
-                
+            current = self.current_repo.active_branch  # Get the branch object directly
+            upstream = current.tracking_branch()  # Get tracking branch from the branch object
+            
+            if not upstream:
+                return False, "Branch não tem upstream configurado"
+            
+            # Fetch para atualizar referências remotas
+            self.current_repo.remotes.origin.fetch()
+            
+            # Verifica commits ahead/behind
+            commits_behind = len(list(self.current_repo.iter_commits(f'HEAD..{upstream.name}')))
+            commits_ahead = len(list(self.current_repo.iter_commits(f'{upstream.name}..HEAD')))
+            
+            if commits_behind > 0 or commits_ahead > 0:
+                return False, f"Branch desatualizada (ahead: {commits_ahead}, behind: {commits_behind})"
+            return True, "Branch sincronizada"
+            
+        except git.GitCommandError as e:
+            return False, f"Erro ao verificar status da branch: {str(e)}"
         except Exception as e:
             return False, str(e)
 
@@ -1124,38 +1399,31 @@ class GitManager:
                 json.dump(default_theme, f, indent=4)
             theme_files = ["default"]
         
-        def load_theme(theme_name):
-            try:
-                theme_path = os.path.join(themes_dir, f"{theme_name}.json")
-                with open(theme_path, "r") as f:
-                    theme_data = json.load(f)
-                
-                # Save theme selection to config
-                self.current_theme = theme_name
-                self.save_config()
-                
-                # Apply theme
-                ctk.set_default_color_theme(theme_path)
-                messagebox.showinfo("Success", f"Theme '{theme_name}' loaded!")
-                
-                # Restart application to apply theme
-                if messagebox.askyesno("Restart Required", 
-                    "The application needs to restart to apply the theme. Restart now?"):
-                    self.window.destroy()
-                    app = GitManager()
-                    app.run()
-                    
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to load theme: {str(e)}")
-        
-        # Theme selector
-        self.theme_option = ctk.CTkOptionMenu(
-            theme_frame,
-            values=theme_files,
-            command=load_theme,
-            width=200
-        )
-        self.theme_option.pack(side="left", padx=10)
+    def load_theme(self, theme_name):
+        try:
+            theme_path = os.path.join(themes_dir, f"{theme_name}.json")
+            with open(theme_path, "r") as f:
+                theme_data = json.load(f)
+            
+            # Save theme selection to config
+            self.current_theme = theme_name
+            self.save_config()
+            
+            # Apply theme
+            ctk.set_default_color_theme(theme_path)
+            messagebox.showinfo("Success", f"Theme '{theme_name}' loaded!")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load theme: {str(e)}")
+            
+            # Theme selector
+            self.theme_option = ctk.CTkOptionMenu(
+                theme_frame,
+                values=theme_files,
+                command=load_theme,
+                width=200
+            )
+            self.theme_option.pack(side="left", padx=10)
         
         # Set initial theme selection to match current theme
         if hasattr(self, 'current_theme') and self.current_theme in theme_files:
@@ -1203,6 +1471,415 @@ class GitManager:
                 json.dump(config, f, indent=4)
         except Exception as e:
             print(f"Error saving config: {e}")
+
+    def show_git_error_message(self):
+        """Show error message and instructions when Git is not properly configured"""
+        error_window = ctk.CTkToplevel(self.window)
+        error_window.title("Git Configuration Error")
+        error_window.geometry("600x400")
+        error_window.transient(self.window)
+        error_window.grab_set()
+        
+        # Center the error window
+        x = self.window.winfo_x() + (self.window.winfo_width() - 600) // 2
+        y = self.window.winfo_y() + (self.window.winfo_height() - 400) // 2
+        error_window.geometry(f"+{x}+{y}")
+        
+        # Error message
+        msg_frame = ctk.CTkFrame(error_window)
+        msg_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        title_label = ctk.CTkLabel(
+            msg_frame,
+            text="Git Configuration Required",
+            font=("Arial", 16, "bold")
+        )
+        title_label.pack(pady=(20, 10))
+        
+        error_text = ctk.CTkTextbox(msg_frame, height=200)
+        error_text.pack(fill="both", padx=10, pady=10)
+        error_text.insert("1.0", 
+            "Git executable not found. Please ensure Git is:\n\n"
+            "1. Installed on your system\n"
+            "2. Added to your system's PATH environment variable\n\n"
+            "To fix this:\n"
+            "1. Download and install Git from https://git-scm.com/downloads\n"
+            "2. During installation, choose 'Add to PATH' option\n"
+            "3. Restart your computer\n"
+            "4. Restart this application\n\n"
+            f"Technical details:\n{GIT_IMPORT_ERROR}"
+        )
+        error_text.configure(state="disabled")
+        
+        def open_git_download():
+            import webbrowser
+            webbrowser.open("https://git-scm.com/downloads")
+        
+        download_btn = ctk.CTkButton(
+            msg_frame,
+            text="Download Git",
+            command=open_git_download
+        )
+        download_btn.pack(pady=10)
+        
+        quit_btn = ctk.CTkButton(
+            msg_frame,
+            text="Quit Application",
+            command=self.window.quit
+        )
+        quit_btn.pack(pady=10)
+
+    def setup_branches_tab(self):
+        # Frame for branch operations
+        branch_frame = ctk.CTkFrame(self.tab_branches)
+        branch_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Branch list with title
+        title_label = ctk.CTkLabel(
+            branch_frame,
+            text="BRANCHES",
+            font=("Arial", 14, "bold")
+        )
+        title_label.pack(pady=(5,10), anchor="w")
+        
+        # Branch list with scrollbar
+        list_frame = ctk.CTkFrame(branch_frame)
+        list_frame.pack(fill="both", expand=True, pady=5)
+        
+        self.branch_listbox = ctk.CTkTextbox(
+            list_frame,
+            height=300,
+            font=("Consolas", 12)
+        )
+        self.branch_listbox.pack(fill="both", expand=True, side="left")
+        
+        # Buttons frame
+        buttons_frame = ctk.CTkFrame(branch_frame)
+        buttons_frame.pack(fill="x", pady=10)
+        
+        # Branch operations buttons
+        buttons = [
+            ("🔄 Fetch", self.fetch_changes),
+            ("🔀 Merge", self.merge_branch),
+            ("⬇️ Pull", self.pull_changes),
+            ("⬆️ Push", self.push_changes),
+            ("➕ New Branch", self.create_new_branch)
+        ]
+        
+        for text, command in buttons:
+            btn = ctk.CTkButton(
+                buttons_frame,
+                text=text,
+                command=command,
+                width=120,
+                height=32
+            )
+            btn.pack(side="left", padx=5)
+        
+        # Initial update
+        self.update_branch_list()
+
+    def create_new_branch(self):
+        if not self.current_repo:
+            messagebox.showerror("Erro", "Nenhum repositório aberto!")
+            return
+        
+        # Create branch dialog
+        branch_window = ctk.CTkToplevel(self.window)
+        branch_window.title("Create New Branch")
+        branch_window.geometry("400x200")
+        branch_window.transient(self.window)
+        branch_window.grab_set()
+        
+        # Center window
+        x = self.window.winfo_x() + (self.window.winfo_width() - 400) // 2
+        y = self.window.winfo_y() + (self.window.winfo_height() - 200) // 2
+        branch_window.geometry(f"+{x}+{y}")
+        
+        # Branch name input
+        name_label = ctk.CTkLabel(branch_window, text="New Branch Name:")
+        name_label.pack(pady=10)
+        
+        name_entry = ctk.CTkEntry(branch_window, width=200)
+        name_entry.pack(pady=10)
+        
+        # Checkbox for checkout
+        checkout_var = ctk.BooleanVar(value=True)
+        checkout_check = ctk.CTkCheckBox(
+            branch_window,
+            text="Checkout new branch",
+            variable=checkout_var
+        )
+        checkout_check.pack(pady=10)
+        
+        def do_create():
+            name = name_entry.get().strip()
+            if not name:
+                messagebox.showerror("Error", "Please enter a branch name")
+                return
+            
+            try:
+                # Create new branch
+                new_branch = self.current_repo.create_head(name)
+                
+                # Checkout if requested
+                if checkout_var.get():
+                    new_branch.checkout()
+                
+                messagebox.showinfo("Success", f"Branch '{name}' created successfully!")
+                branch_window.destroy()
+                self.refresh()
+                
+            except git.GitCommandError as e:
+                messagebox.showerror("Error", str(e))
+        
+        create_button = ctk.CTkButton(
+            branch_window,
+            text="Create Branch",
+            command=do_create
+        )
+        create_button.pack(pady=20)
+
+    def update_branch_list(self):
+        if not self.current_repo:
+            return
+        
+        try:
+            self.branch_listbox.configure(state="normal")
+            self.branch_listbox.delete("1.0", "end")
+            
+            current = self.current_repo.active_branch.name
+            
+            # Add local branches
+            self.branch_listbox.insert("end", "📁 Local Branches:\n", "header")
+            for branch in self.current_repo.heads:
+                prefix = "➤ " if branch.name == current else "  "
+                self.branch_listbox.insert("end", f"{prefix}{branch.name}\n")
+            
+            # Add remote branches
+            self.branch_listbox.insert("end", "\n🌐 Remote Branches:\n", "header")
+            for ref in self.current_repo.remote().refs:
+                name = ref.name.split('/', 1)[1]  # Remove 'origin/' prefix
+                self.branch_listbox.insert("end", f"  {name}\n")
+            
+            # Configure tags for styling
+            self.branch_listbox.tag_config("header", foreground="#00ff00")
+            
+            self.branch_listbox.configure(state="disabled")
+        except git.GitCommandError as e:
+            messagebox.showerror("Erro", str(e))
+        except AttributeError:
+            # No remote configured
+            pass
+
+    def fetch_changes(self):
+        if not self.current_repo:
+            messagebox.showerror("Erro", "Nenhum repositório aberto!")
+            return
+        
+        try:
+            self.current_repo.git.fetch()
+            messagebox.showinfo("Sucesso", "Alterações buscadas com sucesso.")
+            self.refresh()
+        except git.GitCommandError as e:
+            messagebox.showerror("Erro", str(e))
+
+    def merge_branch(self):
+        if not self.current_repo:
+            messagebox.showerror("Erro", "Nenhum repositório aberto!")
+            return
+        
+        # Create merge dialog
+        merge_window = ctk.CTkToplevel(self.window)
+        merge_window.title("Merge Branch")
+        merge_window.geometry("400x250")
+        merge_window.transient(self.window)
+        merge_window.grab_set()
+        
+        # Center window
+        x = self.window.winfo_x() + (self.window.winfo_width() - 400) // 2
+        y = self.window.winfo_y() + (self.window.winfo_height() - 250) // 2
+        merge_window.geometry(f"+{x}+{y}")
+        
+        # Branch selection
+        branch_label = ctk.CTkLabel(
+            merge_window,
+            text="Select branch to merge:",
+            font=("Arial", 12, "bold")
+        )
+        branch_label.pack(pady=10)
+        
+        # Get list of branches (both local and remote)
+        local_branches = [b.name for b in self.current_repo.heads 
+                         if b.name != self.current_repo.active_branch.name]
+        remote_branches = []
+        try:
+            remote_branches = [
+                ref.name for ref in self.current_repo.remote().refs
+                if not ref.name.endswith('/HEAD')
+            ]
+        except (git.GitCommandError, AttributeError):
+            pass
+        
+        all_branches = local_branches + remote_branches
+        
+        if not all_branches:
+            messagebox.showinfo("Info", "No other branches available for merge")
+            merge_window.destroy()
+            return
+        
+        branch_var = ctk.StringVar(value=all_branches[0])
+        branch_menu = ctk.CTkOptionMenu(
+            merge_window,
+            values=all_branches,
+            variable=branch_var,
+            width=250
+        )
+        branch_menu.pack(pady=10)
+        
+        # Merge options
+        options_frame = ctk.CTkFrame(merge_window)
+        options_frame.pack(fill="x", padx=20, pady=10)
+        
+        ff_var = ctk.BooleanVar(value=True)
+        ff_check = ctk.CTkCheckBox(
+            options_frame,
+            text="Fast-forward if possible",
+            variable=ff_var
+        )
+        ff_check.pack(pady=5)
+        
+        squash_var = ctk.BooleanVar(value=False)
+        squash_check = ctk.CTkCheckBox(
+            options_frame,
+            text="Squash merge",
+            variable=squash_var
+        )
+        squash_check.pack(pady=5)
+        
+        def do_merge():
+            try:
+                target_branch = branch_var.get()
+                
+                # Build merge command options
+                merge_args = []
+                if not ff_var.get():
+                    merge_args.append('--no-ff')
+                if squash_var.get():
+                    merge_args.append('--squash')
+                
+                # Perform merge
+                self.current_repo.git.merge(target_branch, *merge_args)
+                
+                messagebox.showinfo("Success", f"Branch '{target_branch}' merged successfully!")
+                merge_window.destroy()
+                self.refresh()
+                
+            except git.GitCommandError as e:
+                if "CONFLICT" in str(e):
+                    messagebox.showerror(
+                        "Error",
+                        "Merge conflicts detected! Please resolve conflicts manually."
+                    )
+                else:
+                    messagebox.showerror("Error", str(e))
+        
+        merge_button = ctk.CTkButton(
+            merge_window,
+            text="Merge",
+            command=do_merge,
+            width=200
+        )
+        merge_button.pack(pady=20)
+
+    def update_estatisticas(self):
+        if not self.current_repo:
+            return
+        
+        try:
+            period = self.period_combobox.get()
+            since_arg = None
+            
+            if period == "Última semana":
+                since_arg = "--since='1 week ago'"
+            elif period == "Último mês":
+                since_arg = "--since='1 month ago'"
+            elif period == "Último ano":
+                since_arg = "--since='1 year ago'"
+            
+            stats = {}
+            
+            log_args = ['--pretty=format:%H']
+            if since_arg:
+                log_args.append(since_arg)
+            
+            commit_count = len(self.current_repo.git.log(*log_args).split('\n'))
+            stats["Total de commits:"] = str(commit_count)
+            
+            authors = set()
+            for commit in self.current_repo.iter_commits():
+                authors.add(f"{commit.author.name} <{commit.author.email}>")
+            stats["Contribuidores:"] = str(len(authors))
+            
+            diff_args = ['--shortstat']
+            if since_arg:
+                diff_args.append(since_arg)
+            
+            try:
+                diff_stats = self.current_repo.git.diff(*diff_args)
+                
+                files_changed = "0"
+                insertions = "0"
+                deletions = "0"
+                
+                if diff_stats:
+                    parts = diff_stats.strip().split(', ')
+                    for part in parts:
+                        if 'files changed' in part:
+                            files_changed = part.split()[0]
+                        elif 'insertions' in part:
+                            insertions = part.split()[0]
+                        elif 'deletions' in part:
+                            deletions = part.split()[0]
+                
+                stats["Arquivos alterados:"] = files_changed
+                stats["Linhas adicionadas:"] = insertions
+                stats["Linhas removidas:"] = deletions
+                
+            except git.GitCommandError as e:
+                messagebox.showerror("Erro", f"Falha ao obter estatísticas de diferenças: {str(e)}")
+                stats["Arquivos alterados:"] = "N/A"
+                stats["Linhas adicionadas:"] = "N/A"
+                stats["Linhas removidas:"] = "N/A"
+            
+            for widget in self.tab_estatisticas.winfo_children():
+                if isinstance(widget, ctk.CTkFrame):
+                    for child in widget.winfo_children():
+                        if isinstance(child, ctk.CTkLabel):
+                            label_text = child.cget("text")
+                            if label_text in stats:
+                                child.configure(text=stats[label_text])
+        
+        except git.GitCommandError as e:
+            messagebox.showerror("Erro", f"Falha ao atualizar estatísticas: {str(e)}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro inesperado ao atualizar estatísticas: {str(e)}")
+
+    def refresh(self):
+        """Refresh all UI components"""
+        if not self.current_repo:
+            return
+        
+        try:
+            self.update_status()
+            self.update_historico()
+            self.update_estatisticas()
+            self.update_mini_console()
+            self.update_file_list()
+            self.update_branch_status()
+            self.update_branch_list()
+        except git.GitCommandError as e:
+            messagebox.showerror("Error", str(e))
 
     def run(self):
         self.window.mainloop()
