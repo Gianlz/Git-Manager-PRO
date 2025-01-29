@@ -966,7 +966,8 @@ class GitManager:
             
         clone_window = ctk.CTkToplevel(self.window)
         clone_window.title("Clonar Repositório")
-        clone_window.geometry("400x200")
+        # UI for 1920x1080
+        clone_window.geometry("400x240")
         clone_window.transient(self.window)
         clone_window.grab_set()
         
